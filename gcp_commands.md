@@ -34,8 +34,17 @@ gcloud sql databases create clinical_trial_db \
 Create Database inside the instance
 gcloud sql users create mosaic_user --instance=clinical-trial-db --password=mosaic_pass_2024 --project=clinical-trail-intelligence
 
+
+
 curl.exe -4 ifconfig.me
 
 69.250.234.102
 
 gcloud sql instances patch clinical-trial-db --authorized-networks=69.250.234.102/32 --project=clinical-trail-intelligence
+
+Connect to the DB
+
+psql -h 34.60.239.203 -p 5432 -U mosaic_user -d clinical_trial_db
+Above command will prompt to usr and password
+
+

@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     
     
     openai_api_key: str = Field(..., env="OPENAI_API_KEY", description="OpenAI API key for accessing OpenAI services")
-    openai_embedding_model: str = Field(default="text-embedding-3-large", description="OpenAI embedding model to use for generating embeddings")
+    openai_embedding_model: str = Field(default="text-embedding-3-small", description="OpenAI embedding model to use for generating embeddings")
     openai_chat_model: str = Field(default="gpt-4o", description="OpenAI chat model to use for generating responses and agent reasoning")
     langsmith_api_key: str = Field(..., description="LangSmith API key for tracing and monitoring LangChain applications")
     langsmith_project: str = Field(default="Clinical-Trial-Intelligence", description="LangSmith project name for organizing and managing LangChain applications")
