@@ -36,7 +36,7 @@ class Settings(BaseSettings):
     db_user: str = Field(..., description="Cloud SQL database user")
     db_password: str = Field(..., description="Cloud SQL database password")
     
-     # ── CLINICALTRIALS.GOV ────────────────────────────────────
+    # ── CLINICALTRIALS.GOV ────────────────────────────────────
 
     clinical_trials_base_url: str = Field(
         default="https://clinicaltrials.gov/api/v2",
