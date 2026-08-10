@@ -221,7 +221,7 @@ class ClinicalTrialsClient:
     @retry(
         stop=stop_after_attempt(MAX_RETRIES),
         wait=wait_exponential(multiplier=1, min=2, max=8),
-        retry=retry_if_exception_type(requests.RequestException),
+        retry=retry_if_exception_type(requests.exceptions.Timeout) | retry_if_exception_type(requests.exceptions.ConnectionError),
         reraise=True
     )
     async def _fetch_page(self, params: dict[str, Any]) -> dict[str, Any] | None:
