@@ -44,6 +44,7 @@
 ##############################################################################
 
 import asyncio
+from pydantic import json
 import requests
 from typing import Any
 from tenacity import(
@@ -136,15 +137,135 @@ class ClinicalTrialsClient:
         page_number = 0
         logger.info(
             f"searching studies | "
-            f"condition={condition}, "
-            f"intervention={intervention}, "
-            f"sponsor={sponsor}, "
+            f"condition={condition} |, "
+            f"intervention={intervention} |, "
+            f"sponsor={sponsor} |, "
             f"status={status}, "
             f"max_results={max_results}"
         )
         while len(all_studies) < max_results:
             
             page_number +=1
-             
+            params = self._build_search_params(
+                condition=condition,
+                intervention=intervention,
+                sponsor=sponsor,
+                status=status,
+                page_token=next_page_token,
+            )
+            response_data = await self._fetch_page(params=params)
+            if not response_data:
+                break
+            page_studies = response_data.get("studies", [])
+            if not page_studies:
+                logger.info("No more studies found, stopping pagination.")
+                break
+            all_studies.extend(page_studies)
+            logger.info(f"page is {page_number} | "
+                        f"length of page studies {len(page_studies)} | "
+                        f"total studies collected {len(all_studies)}")
+            
+            next_page_token = response_data.get("next_page_token")
+            if not next_page_token:
+                logger.info("No next page token found, stopping pagination.")
+                break
+        all_studies = all_studies[:max_results]
+        logger.info(f"search completed | total studies collected {len(all_studies)}")
         return all_studies
-     
+    async def _build_search_params(self,
+        condition: str | None = None,
+        intervention: str | None = None,
+        sponsor: str | None = None,
+        status: list[str] | None = None,
+        page_token: str | None = None,
+    ) -> dict[str, Any]:
+        """builds Query parameters for one API request
+
+        Args:
+            condition (str | None, optional): _description_. Defaults to None.
+            intervention (str | None, optional): _description_. Defaults to None.
+            sponsor (str | None, optional): _description_. Defaults to None.
+            status (list[str] | None, optional): _description_. Defaults to None.
+            page_token (str | None, optional): _description_. Defaults to None.
+
+        Returns:
+            dict[str, Any]: _description_
+        """
+        params: dict[str, Any] = {
+            "pageSize": PAGE_SIZE,
+            "format": "json"
+        }
+        if condition:
+            params["query.cond"] = condition
+            # query.intr searches by intervention (drug or treatment) name.
+            # Example: "semaglutide" finds studies testing that drug.
+        if intervention:
+            params["query.intr"] = intervention
+            # query.spons searches by sponsor organisation name.
+            # Example: "Pfizer" finds all Pfizer-sponsored studies.
+        if sponsor:
+            params["query.spons"] = sponsor
+        if status:
+            params["filter.overallStatus"] = "|".join(status)
+            # filter.overallStatus filters by study status.
+            # IMPORTANT: ClinicalTrials.gov v2 uses pipe | as separator.
+            # ["COMPLETED", "RECRUITING"] → "COMPLETED|RECRUITING"
+            # Using comma here would cause a 403 error — we discovered
+            # this through debugging. Pipe is the correct separator.
+        if page_token:
+            params["pageToken"] = page_token
+            # The cursor token from the previous page's response.
+            # Sending this tells the API: "give me the page AFTER this token"
+            # Without this, every request would return the first page again.
+        return params
+    @retry(
+        stop=stop_after_attempt(MAX_RETRIES),
+        wait=wait_exponential(multiplier=1, min=2, max=8),
+        retry=retry_if_exception_type(requests.RequestException),
+        reraise=True
+    )
+    async def _fetch_page(self, params: dict[str, Any]) -> dict[str, Any] | None:
+        """fetches one page of study records from the API
+
+        Args:
+            params (dict[str, Any]): query parameters for the request
+        """
+        def _get():
+            return self._session.get(
+                f"{BASE_URL}/studies", 
+                params=params, 
+                timeout=REQUEST_TIMEOUT
+            )
+        try:
+            response = await asyncio.to_thread(_get)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.Timeout:
+            logger.warning(f"Request timed out after {REQUEST_TIMEOUT} seconds. Retrying...")
+            raise
+            # re raise the exception to trigger retry
+        except requests.exceptions.ConnectionError:
+            logger.warning("Connection error — retrying...")
+            raise
+            # Re-raise for the same reason — let tenacity retry.
+
+        except requests.exceptions.HTTPError as e:
+            logger.error(
+                f"HTTP error from API | "
+                f"status={e.response.status_code} | "
+                f"url={e.response.url}"
+            )
+            return None
+            # Return None for HTTP errors — do not retry these.
+            # A 403 or 404 will not be fixed by retrying.
+            # The error is already logged so the caller knows what happened.
+
+        except Exception as e:
+            logger.error(
+                f"Unexpected error fetching page | "
+                f"error={e}"
+            )
+            return None
+            # Catch any other unexpected error.
+            # Return None so the pipeline continues with other conditions
+            # rather than crashing completely.
