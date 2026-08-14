@@ -226,3 +226,144 @@ class PubMedClient:
             if batch_num < len(batches) - 1:
                 await asyncio.sleep(RATE_LIMIT_SLEEP)
         return all_papers
+    @retry(stop = stop_after_attempt(MAX_RETRIES), 
+        wait = wait_exponential(multiplier=1, min=1, max=8),
+        retry = retry_if_exception_type(httpx.ConnectError) | retry_if_exception_type(httpx.ReadTimeout) | retry_if_exception_type(httpx.HTTPStatusError))
+    async def _fetch_batch(self, paper_ids: list[str]) -> list[dict[str, Any]]:
+        """
+        Fetches detailed information for a batch of PubMed paper IDs.
+
+        Args:
+            paper_ids: List of PubMed paper ID strings.
+        Returns:
+            List of dictionaries containing paper details.
+            Empty list if no papers found or request failed.
+        """
+        try:
+            response = await self._client.get(
+                f"{BASE_URL}/efetch.fcgi",
+                params={
+                    "db":      "pubmed",
+                    "id":      ",".join(paper_ids),
+                    "retmode": "xml",
+                    "rettype": "abstract",
+                },
+            )
+
+            response.raise_for_status()
+
+            papers = self._parse_xml_response(xml_text=response.text)
+
+            await asyncio.sleep(RATE_LIMIT_SLEEP)
+
+            return papers
+
+        except httpx.TimeoutException:
+            logger.warning("Timeout fetching paper batch — retrying...")
+            raise
+
+        except httpx.ConnectError:
+            logger.warning("Connection error fetching paper batch — retrying...")
+            raise
+
+        except Exception as e:
+            logger.error(f"Failed to fetch paper batch | error={e}")
+            return []
+    # ── PRIVATE METHOD: PARSE XML RESPONSE ────────────────────
+
+    def _parse_xml_response(self, xml_text: str) -> list[dict[str, Any]]:
+        """
+        Parses the XML response from PubMed efetch into a list of
+        clean Python dictionaries.
+
+        Args:
+            xml_text: The raw XML string from the efetch response.
+
+        Returns:
+            List of paper dictionaries with standardised fields.
+        """
+
+        import xml.etree.ElementTree as ET
+
+        papers: list[dict[str, Any]] = []
+
+        try:
+            root = ET.fromstring(xml_text)
+
+            for article in root.findall(".//PubmedArticle"):
+                paper = self._extract_paper_fields(article)
+                if paper:
+                    papers.append(paper)
+
+        except ET.ParseError as e:
+            logger.error(f"Failed to parse PubMed XML response | error={e}")
+
+        return papers
+
+    def _extract_paper_fields(self, article_element: Any) -> dict[str, Any] | None:
+        """
+        Extracts the fields we need from one PubmedArticle XML element.
+
+        Args:
+            article_element: One PubmedArticle XML element.
+
+        Returns:
+            Dictionary with the paper's key fields.
+            None if extraction failed completely.
+        """
+
+        import xml.etree.ElementTree as ET
+
+        def get_text(element: Any, path: str, default: str = "") -> str:
+            node = element.find(path)
+            return node.text.strip() if node is not None and node.text else default
+
+        try:
+            pmid  = get_text(article_element, ".//PMID")
+            title = get_text(article_element, ".//ArticleTitle")
+
+            abstract_texts = article_element.findall(".//AbstractText")
+            abstract = " ".join(
+                node.text.strip()
+                for node in abstract_texts
+                if node.text
+            )
+
+            pub_year  = get_text(article_element, ".//PubDate/Year")
+            pub_month = get_text(article_element, ".//PubDate/Month", "01")
+            pub_date  = f"{pub_year}-{pub_month}" if pub_year else ""
+
+            journal = get_text(article_element, ".//Journal/Title")
+
+            author_elements = article_element.findall(".//Author")
+            authors = []
+            for author in author_elements:
+                last  = get_text(author, "LastName")
+                first = get_text(author, "ForeName")
+                if last:
+                    authors.append(f"{last}, {first}".strip(", "))
+
+            nct_ids_referenced = [
+                id_elem.text.strip()
+                for id_elem in article_element.findall(
+                    ".//DataBankList/DataBank/AccessionNumberList/AccessionNumber"
+                )
+                if id_elem.text and id_elem.text.strip().startswith("NCT")
+            ]
+
+            return {
+                "pmid":               pmid,
+                "title":              title,
+                "abstract":           abstract,
+                "journal":            journal,
+                "pub_date":           pub_date,
+                "authors":            authors,
+                "nct_ids_referenced": nct_ids_referenced,
+                "source":             "pubmed",
+            }
+
+        except Exception as e:
+            logger.error(
+                f"Failed to extract paper fields | pmid=UNKNOWN | error={e}"
+            )
+            return None
