@@ -152,8 +152,66 @@ class PubMedClient:
         """
         results: dict[str, list[dict[str, Any]]] = {}
         for i, nct_id in enumerate(nct_ids):
+            logger.info(
+                f"Processing trial {i + 1}/{len(nct_ids)} | "
+                f"nct_id={nct_id}"
+            )
             papers = await self.fetch_papers_for_trial(nct_id, max_results=max_per_trial)
             results[nct_id] = papers
+            if i < len(nct_ids) - 1:
+                await asyncio.sleep(RATE_LIMIT_SLEEP)
         return results
+    # ── PRIVATE METHOD: SEARCH FOR PAPER IDs (esearch) ────────
+    @retry(stop = stop_after_attempt(MAX_RETRIES), 
+        wait = wait_exponential(multiplier=1, min=1, max=8),
+        retry = retry_if_exception_type(httpx.ConnectError) | retry_if_exception_type(httpx.ReadTimeout) | retry_if_exception_type(httpx.HTTPStatusError))
+    async def _search_paper_ids(self,nct_id: str, max_results: int,) -> list[str]:
+        """
+        Searches PubMed for paper IDs that reference a specific clinical trial.
 
+        Args:
+            nct_id:      The clinical trial ID to search for.
+            max_results: Maximum number of paper IDs to return.
+        Returns:
+            List of PubMed paper ID strings.
+            Empty list if no papers found or request failed.
+        """
+        try:
+            response = await self._client(f"{BASE_URL}/esearch.fcgi", params={
+                "db": "pubmed",
+                "term": nct_id,
+                "retmax": max_results,
+                "retmode": "json",
+            }
+                                        )
+            response.raise_for_status()
+            data = response.json()
+            id_list = data.get("esearchresult", {}).get("idlist", [])
+            return id_list
+        except httpx.TimeoutException:
+            logger.warning(f"Timeout searching PubMed | nct_id={nct_id} — retrying...")
+            raise
+        except httpx.ConnectError:
+            logger.warning(
+                f"Connection error searching PubMed | nct_id={nct_id} — retrying..."
+            )
+            raise
 
+        except Exception as e:
+            logger.error(
+                f"Failed to search PubMed | nct_id={nct_id} | error={e}"
+            )
+            return []
+    # ── PRIVATE METHOD: FETCH PAPER DETAILS (efetch) ──────────
+    async def fetch_paper_details(self, paper_ids: list[str]) -> list[dict[str, Any]]:
+        """
+        Fetches detailed information for a list of PubMed paper IDs.
+
+        Args:
+            paper_ids: List of PubMed paper ID strings.
+        Returns:
+            List of dictionaries containing paper details.
+            Empty list if no papers found or request failed.
+        """
+        # Implementation goes here
+        all_papers: list[dict[str,Any]] = []
