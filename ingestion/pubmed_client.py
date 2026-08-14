@@ -215,3 +215,14 @@ class PubMedClient:
         """
         # Implementation goes here
         all_papers: list[dict[str,Any]] = []
+        batches = [ paper_ids[i:i + FETCH_BATCH_SIZE] for i in range(0, len(paper_ids), FETCH_BATCH_SIZE)]
+        for batch_num, batch in enumerate(batches):
+            logger.info(f"Fetching paper details |"
+                        f"batch = {batch_num +1}/{len(batches)} |"
+                        f"papers in the batch = {len(batch)}")
+            batch_papers = await self._fetch_batch(paper_ids=batch)
+            all_papers.extend(batch_papers)
+            
+            if batch_num < len(batches) - 1:
+                await asyncio.sleep(RATE_LIMIT_SLEEP)
+        return all_papers
