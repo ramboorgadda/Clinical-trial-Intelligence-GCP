@@ -61,7 +61,7 @@ logger = setup_logger(__name__)
 
 # Constants
 
-BASE_URL = settings.PUBMED_BASE_URL
+BASE_URL = settings.pubmed_base_url
 REQUEST_TIMEOUT = 30
 MAX_RETRIES = 3
 FETCH_BATCH_SIZE = 20 # Number of paper IDs to fetch in one efetch request
@@ -126,7 +126,7 @@ class PubMedClient:
         if not paper_ids:
             logger.info(f"No papers found for nct_id={nct_id}")
             return []
-        papers = await self._fetch_papers(paper_ids)
+        papers = await self._fetch_paper_details(paper_ids)
         logger.info(
             f"PubMed fetch complete | "
             f"nct_id={nct_id} | "
@@ -203,7 +203,7 @@ class PubMedClient:
             )
             return []
     # ── PRIVATE METHOD: FETCH PAPER DETAILS (efetch) ──────────
-    async def fetch_paper_details(self, paper_ids: list[str]) -> list[dict[str, Any]]:
+    async def _fetch_paper_details(self, paper_ids: list[str]) -> list[dict[str, Any]]:
         """
         Fetches detailed information for a list of PubMed paper IDs.
 
