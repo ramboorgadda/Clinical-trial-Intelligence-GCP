@@ -321,3 +321,106 @@ class DocumentParser:
             nct_id = raw_study.get("protocolSection", {}).get("identificationModule", {}).get("nctId", "unknown")
             logger.error(f"Failed to parse study {nct_id}: {e}")
             return None
+    def parse_studies(self, raw_Studies: list[dict[str,Any]]) -> list[ParsedStudy]:
+        """
+        Cleans a list of raw study records from ClinicalTrials.gov.
+
+        Args:
+            raw_studies (list): A list of raw JSON data for studies.
+
+        Returns:
+            list[ParsedStudy]: A list of cleaned study records.
+        """
+        parsed_studies = []
+        failed = 0
+        for raw_study in raw_Studies:
+            parsed_study = self.parse_study(raw_study)
+            if parsed_study:
+                parsed_studies.append(parsed_study)
+            else:
+                failed += 1
+        logger.info(f"Parsed studies |"
+                    f"success = {len(parsed_studies)} |"
+                    f"failed = {failed} |"
+                    f"total = {len(raw_Studies)}")
+        return parsed_studies
+    def parse_paper(self, raw: dict[str, Any]) -> ParsedPaper | None:
+        """
+        Cleans one raw PubMed paper record.
+
+        PubMed papers are simpler than studies — the pubmed_client.py
+        file already flattened the XML into a reasonably clean dict.
+        This method does the final cleanup and builds the typed object.
+
+        Args:
+            raw: One raw paper dictionary from pubmed_client.py.
+
+        Returns:
+            A ParsedPaper if everything worked.
+            None if something went wrong.
+        """
+
+        try:
+            abstract = raw.get("abstract", "")
+            word_count = len(abstract.split()) if abstract else 0
+            # split() breaks the abstract into words by whitespace.
+            # len() counts how many words there are.
+            # This is an approximate count — good enough for our purpose,
+            # which is just spotting unusually short/empty abstracts.
+
+            return ParsedPaper(
+                pmid=raw.get("pmid", ""),
+                title=raw.get("title", ""),
+                abstract=abstract,
+                journal=raw.get("journal", ""),
+                pub_date=raw.get("pub_date", ""),
+                authors=raw.get("authors", []),
+                nct_ids_referenced=raw.get("nct_ids_referenced", []),
+                source="pubmed",
+                word_count=word_count,
+                parsed_at=datetime.utcnow().isoformat(),
+            )
+
+        except Exception as e:
+            logger.error(
+                f"Failed to parse paper | "
+                f"pmid={raw.get('pmid', 'UNKNOWN')} | "
+                f"error={e}"
+            )
+            return None
+
+    # ── PARSE MANY PAPERS AT ONCE ──────────────────────────────
+
+    def parse_papers(
+        self,
+        raw_papers: list[dict[str, Any]],
+    ) -> list[ParsedPaper]:
+        """
+        Parses a whole list of raw papers in one call.
+        Same pattern as parse_studies — failures are skipped, not fatal.
+
+        Args:
+            raw_papers: List of raw paper dicts from pubmed_client.py.
+
+        Returns:
+            List of successfully parsed ParsedPaper objects.
+        """
+
+        parsed = []
+        failed = 0
+
+        for raw in raw_papers:
+            paper = self.parse_paper(raw)
+            if paper:
+                parsed.append(paper)
+            else:
+                failed += 1
+
+        logger.info(
+            f"Parsed papers | "
+            f"success={len(parsed)} | "
+            f"failed={failed} | "
+            f"total={len(raw_papers)}"
+        )
+
+        return parsed
