@@ -186,4 +186,109 @@ class GCSStore:
             f"Saved parsed paper | pmid={paper.pmid} | path={gcs_path}"
         )
         return gcs_path
-    
+    async def load_parsed_study(self,nct_id: str) -> ParsedStudy | None:
+        """
+        Loads a previously saved, cleaned study back from GCS.
+
+        This is the REVERSE of save_parsed_study — we use this
+        in the processing layer when we need to read studies
+        back in to chunk and embed them.
+
+        Args:
+            nct_id: Which study to load, by its NCT ID.
+
+        Returns:
+            A ParsedStudy object if found.
+            None if no study with that ID exists in GCS.
+        """
+        gcs_path = f"{PREFIX_PROCESSED_STUDIES}{nct_id}.json"
+        data = await self._download_json(gcs_path=gcs_path)
+        # Download the raw JSON text and convert it back to a
+        # Python dictionary (our private helper does this).
+        if data is None:
+            return None
+        return ParsedStudy(**data)
+         # **data "unpacks" the dictionary into keyword arguments.
+        # Example: if data = {"nct_id": "NCT123", "title": "..."}
+        # then ParsedStudy(**data) is the same as writing:
+        # ParsedStudy(nct_id="NCT123", title="...")
+        # This rebuilds our typed Pydantic object from the saved dict.
+    async def list_processed_studies(self) -> list[str]:
+        """
+        Lists all the NCT IDs of studies that have been saved in GCS.
+
+        This is useful for knowing which studies have already been
+        processed and saved, so we don't re-download or re-process
+        them unnecessarily.
+
+        Returns:
+            A list of NCT IDs (strings) for all processed studies.
+        """
+        prefix = PREFIX_PROCESSED_STUDIES
+        blobs = self._bucket.list_blobs(prefix=prefix)
+        nct_ids = []
+        async for blob in blobs:
+            # Each blob's name looks like "processed/studies/NCT12345678.json"
+            # We want to extract just the NCT ID part.
+            name = blob.name
+            if name.endswith(".json"):
+                nct_id = name[len(prefix):-len(".json")]
+                nct_ids.append(nct_id)
+        logger.info(f"Listed processed studies | count={len(nct_ids)}")
+        return nct_ids
+        # ── PRIVATE HELPER: UPLOAD ANY DICT AS A JSON FILE ────────
+    async def _upload_json(self, path: str, data: dict[str, Any]) -> None:
+        """
+        Uploads a Python dictionary as a JSON file to GCS.
+
+        Args:
+            path: The path in GCS where the JSON should be saved.
+            data: The dictionary to upload.
+        """
+        json_bytes = json.dumps(data, indent=2,default = str).encode("utf-8")  # Convert dict to pretty-printed JSON string
+        blob = self._bucket.blob(path)
+        await asyncio.to_thread(blob.upload_from_string, json_bytes, content_type="application/json")
+        
+    async def _download_json(
+        self,
+        path: str,
+    ) -> dict[str, Any] | None:
+        """
+        The shared internal method that downloads a file from GCS
+        and converts it back into a Python dictionary.
+
+        Args:
+            path: The path inside the GCS bucket to download from.
+
+        Returns:
+            A Python dictionary if the file was found.
+            None if the file does not exist or something went wrong.
+        """
+
+        try:
+            blob = self._bucket.blob(path)
+            # Point to the file we want to download.
+
+            json_bytes = await asyncio.to_thread(blob.download_as_bytes)
+            # Download the file's raw content as bytes.
+            # Again wrapped in asyncio.to_thread() since this
+            # Google library call is synchronous by default.
+
+            return json.loads(json_bytes.decode("utf-8"))
+            # Step 1: .decode("utf-8") turns the raw bytes back
+            #         into readable text.
+            # Step 2: json.loads(...) turns that JSON text back
+            #         into a Python dictionary we can work with.
+
+        except Exception as e:
+            if "404" in str(e) or "Not Found" in str(e):
+                # A 404 simply means "this file does not exist".
+                # This is an EXPECTED situation sometimes — not a bug.
+                logger.warning(f"File not found in GCS | path={path}")
+            else:
+                # Anything else is a real, unexpected problem —
+                # log it as an error so we can investigate.
+                logger.error(
+                    f"Failed to download from GCS | path={path} | error={e}"
+                )
+            return None
