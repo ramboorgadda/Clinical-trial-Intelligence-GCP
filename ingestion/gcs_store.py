@@ -1,14 +1,189 @@
-# save and load the documents to and from GCS
-# This is permanent storage for the documents and their metadata.
-# saves the raw APi responses to GCS bucket as JSON
-# saves parsed study and paper records to GCS and JSON
-# loan the documents back from GCS for agent use and analysis
-# list available documents by prefix - useful for batch processing
+##############################################################################
+# ingestion/gcs_store.py
+#
+# PURPOSE:
+#   This file saves our data to Google Cloud Storage (GCS) — and
+#   loads it back when we need it.
+#   Think of GCS as a giant hard drive in the cloud that never
+#   runs out of space and is always online.
+#
+# WHY DO WE SAVE TO GCS AT ALL — WHY NOT JUST KEEP DATA IN MEMORY:
+#   If our Python program crashes halfway through downloading
+#   144 studies, we lose everything if we only kept it in memory.
+#   By saving to GCS as we go, even if something crashes,
+#   the studies we already downloaded are safe.
+#
+# THE "RAW vs PROCESSED" PATTERN — WHY WE SAVE DATA TWICE:
+#   We save EVERY piece of data in two different forms:
+#
+#   1. RAW   — exactly what the API gave us, completely untouched.
+#              Think of this as a photocopy of the original document.
+#   2. PROCESSED — the cleaned-up version after document_parser.py
+#              has done its work. Think of this as a neatly typed-up
+#              summary of that document.
+#
+#   WHY BOTH? If our parser (document_parser.py) has a bug and
+#   cleans the data incorrectly, we have NOT lost anything —
+#   the raw original is still sitting safely in GCS. We can simply
+#   fix the parser and re-process the raw data again.
+#   This is a real production safety pattern — never throw away
+#   your original source data.
+#
+# THE FOLDER STRUCTURE INSIDE OUR BUCKET:
+#   raw/studies/NCT04788680.json        ← exactly what ClinicalTrials.gov sent us
+#   raw/papers/38234567.json            ← exactly what PubMed sent us
+#   processed/studies/NCT04788680.json  ← the cleaned ParsedStudy object
+#   processed/papers/38234567.json      ← the cleaned ParsedPaper object
+#
+# SHOULD YOU RUN THIS FILE DIRECTLY?
+#   No. This file defines a class that run_ingestion.py uses.
+#   Do not run it by itself.
+#
+# HOW OTHER FILES USE THIS:
+#   from ingestion.gcs_store import GCSStore
+#
+#   store = GCSStore()
+#   await store.save_raw_study(nct_id="NCT04788680", data=raw_dict)
+#   await store.save_parsed_study(study=parsed_study_object)
+##############################################################################
+import json
 
-# why we save the raw data first ?
-# If the parser has a bug, raw originals are safe in GCS
-# folder structure can you expect in GCS
-# raw/studies/NCT082341.json --> exactly what the API returned for a study
-# raw/papers/PMC123456.json --> exactly what the pubMed API returned for a paper
-# processed/studies/NCT082341.json --> cleaned and normalized study record
-# processed/papers/PMC123456.json --> cleaned and normalized paper record
+from config.logging_config import setup_logging
+
+from config.settings import settings
+import asyncio
+from typing import Any
+from google.cloud import storage
+from ingestion.document_parser import ParsedStudy, ParsedPaper
+logger = setup_logging(__name__)
+# __name__ here = "ingestion.gcs_store"
+# ─────────────────────────────────────────────────────────────
+# FOLDER PATHS INSIDE OUR BUCKET
+#
+# A GCS "bucket" does not really have folders the way your
+# computer does — but it LOOKS like it has folders because
+# every file we save has a path-like name with slashes in it.
+# Example: "raw/studies/NCT04788680.json" looks like a folder
+# structure even though GCS technically just sees one long name.
+# Defining these as constants means if we ever want to change
+# the folder layout, we only change it in ONE place.
+# ─────────────────────────────────────────────────────────────
+
+PREFIX_RAW_STUDIES = "raw/studies/"
+PREFIX_RAW_PAPERS = "raw/papers/"
+PREFIX_PROCESSED_STUDIES = "processed/studies/"
+PREFIX_PROCESSED_PAPERS = "processed/papers/"
+
+# ─────────────────────────────────────────────────────────────
+# THE GCS STORE CLASS
+# ─────────────────────────────────────────────────────────────
+
+
+class GCSStore:
+    """Handles saving data to and loading data from Google Cloud Storage.
+
+    IMPORTANT — WHY WE USE asyncio.to_thread() THROUGHOUT THIS FILE:
+
+    Google's official storage library is "synchronous" — meaning
+    when you ask it to upload a file, your whole program freezes
+    and waits until the upload is done before doing anything else.
+
+    But our entire MOSAIC system is built to be "asynchronous" —
+    meaning we want our program to be able to do OTHER things
+    while waiting for slow operations like uploads to finish.
+
+    asyncio.to_thread() is the bridge between these two worlds.
+    It takes a synchronous function (like a GCS upload) and runs
+    it in a separate background thread, while letting our main
+    program keep working on other tasks in the meantime.
+    Think of it like handing a task to an assistant in another
+    room, instead of standing there waiting yourself.
+    """
+    
+    def __init_(self):
+        self._client = storage.Client(project=settings.gcp_project_id)
+        self._bucket = self._client.bucket(settings.gcs_bucket_name)
+        logger.info(f"GCSStore initialized | bucket={settings.gcs_bucket_name} |"
+                    f"project={settings.gcp_project_id}")
+    # Save a raw study
+    async def save_raw_study(self, nct_id: str,
+                            data: dict[str,Any]) -> str:
+        """
+        Saves the EXACT, untouched API response for one study.
+
+        Call this the moment you receive data from the API —
+        BEFORE any cleaning or parsing happens. This way, even
+        if the parser has a bug, the original is always safe.
+
+        Args:
+            nct_id: The study's ID, used as the filename.
+            data:   The raw study dictionary to save.
+
+        Returns:
+            The path inside GCS where the file was saved.
+            Example: "raw/studies/NCT04788680.json"
+        """
+        gcs_path = f"{PREFIX_RAW_STUDIES}{nct_id}.json"
+        
+        await self._upload_json(gcs_path=gcs_path, data=data)
+        return gcs_path
+    # ── SAVE A RAW PAPER ───────────────────────────────────────
+    async def save_raw_paper(self,pmid: str, data: dict[str,Any]) -> str:
+        """
+        Saves the EXACT, untouched API response for one paper.
+
+        Call this the moment you receive data from the API —
+        BEFORE any cleaning or parsing happens. This way, even
+        if the parser has a bug, the original is always safe.
+
+        Args:
+            pmid: The paper's PubMed ID, used as the filename.
+            data: The raw paper dictionary to save.
+        """
+        gcs_path = f"{PREFIX_RAW_PAPERS}{pmid}.json"
+        await self._upload_json(gcs_path=gcs_path, data=data)
+        return gcs_path
+    # Save a clean parsed study
+    async def save_parsed_study(self, study: ParsedStudy) -> str:
+        """
+        Saves a clean, parsed study object to GCS.
+
+        This is the version of the study after document_parser.py
+        has cleaned and structured it. If you ever need to re-run
+        the parser, you can always go back to the raw version.
+
+        Args:
+            study: The ParsedStudy object to save.
+
+        Returns:
+            The path inside GCS where the file was saved.
+            Example: "processed/studies/NCT04788680.json"
+        """
+        gcs_path = f"{PREFIX_PROCESSED_STUDIES}{study.nct_id}.json"
+        await self._upload_json(gcs_path=gcs_path, data=study.model_dump())
+        logger.info(
+            f"Saved parsed study | nct_id={study.nct_id} | path={gcs_path}"
+        )
+        return gcs_path
+    async def save_parsed_paper(self, paper: ParsedPaper) -> str:
+        """
+        Saves a clean, parsed paper object to GCS.
+
+        This is the version of the paper after document_parser.py
+        has cleaned and structured it. If you ever need to re-run
+        the parser, you can always go back to the raw version.
+
+        Args:
+            paper: The ParsedPaper object to save.
+
+        Returns:
+            The path inside GCS where the file was saved.
+            Example: "processed/papers/12345678.json"
+        """
+        gcs_path = f"{PREFIX_PROCESSED_PAPERS}{paper.pmid}.json"
+        await self._upload_json(gcs_path=gcs_path, data=paper.model_dump())
+        logger.info(
+            f"Saved parsed paper | pmid={paper.pmid} | path={gcs_path}"
+        )
+        return gcs_path
+    

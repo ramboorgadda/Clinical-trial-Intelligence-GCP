@@ -53,7 +53,7 @@ class Settings(BaseSettings):
         # for rate limits and memory — the client paginates automatically.
         description="Number of studies to fetch per API page"
     )
- # ── PUBMED ────────────────────────────────────────────────
+# ── PUBMED ────────────────────────────────────────────────
 
     pubmed_base_url: str = Field(
         default="https://eutils.ncbi.nlm.nih.gov/entrez/eutils",
