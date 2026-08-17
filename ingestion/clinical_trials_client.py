@@ -172,7 +172,7 @@ class ClinicalTrialsClient:
         all_studies = all_studies[:max_results]
         logger.info(f"search completed | total studies collected {len(all_studies)}")
         return all_studies
-    async def _build_search_params(self,
+    def _build_search_params(self,
         condition: str | None = None,
         intervention: str | None = None,
         sponsor: str | None = None,

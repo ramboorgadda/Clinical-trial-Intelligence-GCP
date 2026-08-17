@@ -100,7 +100,7 @@ class GCSStore:
     room, instead of standing there waiting yourself.
     """
     
-    def __init_(self):
+    def __init__(self):
         self._client = storage.Client(project=settings.gcp_project_id)
         self._bucket = self._client.bucket(settings.gcs_bucket_name)
         logger.info(f"GCSStore initialized | bucket={settings.gcs_bucket_name} |"
@@ -125,7 +125,7 @@ class GCSStore:
         """
         gcs_path = f"{PREFIX_RAW_STUDIES}{nct_id}.json"
         
-        await self._upload_json(gcs_path=gcs_path, data=data)
+        await self._upload_json(path=gcs_path, data=data)
         return gcs_path
     # ── SAVE A RAW PAPER ───────────────────────────────────────
     async def save_raw_paper(self,pmid: str, data: dict[str,Any]) -> str:
@@ -141,7 +141,7 @@ class GCSStore:
             data: The raw paper dictionary to save.
         """
         gcs_path = f"{PREFIX_RAW_PAPERS}{pmid}.json"
-        await self._upload_json(gcs_path=gcs_path, data=data)
+        await self._upload_json(path=gcs_path, data=data)
         return gcs_path
     # Save a clean parsed study
     async def save_parsed_study(self, study: ParsedStudy) -> str:
@@ -160,7 +160,7 @@ class GCSStore:
             Example: "processed/studies/NCT04788680.json"
         """
         gcs_path = f"{PREFIX_PROCESSED_STUDIES}{study.nct_id}.json"
-        await self._upload_json(gcs_path=gcs_path, data=study.model_dump())
+        await self._upload_json(path=gcs_path, data=study.model_dump())
         logger.info(
             f"Saved parsed study | nct_id={study.nct_id} | path={gcs_path}"
         )
@@ -181,7 +181,7 @@ class GCSStore:
             Example: "processed/papers/12345678.json"
         """
         gcs_path = f"{PREFIX_PROCESSED_PAPERS}{paper.pmid}.json"
-        await self._upload_json(gcs_path=gcs_path, data=paper.model_dump())
+        await self._upload_json(path=gcs_path, data=paper.model_dump())
         logger.info(
             f"Saved parsed paper | pmid={paper.pmid} | path={gcs_path}"
         )
@@ -202,7 +202,7 @@ class GCSStore:
             None if no study with that ID exists in GCS.
         """
         gcs_path = f"{PREFIX_PROCESSED_STUDIES}{nct_id}.json"
-        data = await self._download_json(gcs_path=gcs_path)
+        data = await self._download_json(path=gcs_path)
         # Download the raw JSON text and convert it back to a
         # Python dictionary (our private helper does this).
         if data is None:

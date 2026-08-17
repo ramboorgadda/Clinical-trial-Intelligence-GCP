@@ -38,7 +38,6 @@
 #   clean_study = parser.parse_study(raw_study_dict)
 #   clean_paper = parser.parse_paper(raw_paper_dict)
 ##############################################################################
-from curses import raw
 from typing import Any
 from datetime import datetime
 from pydantic import BaseModel, Field
@@ -248,7 +247,11 @@ class DocumentParser:
             # pull out its "name" field, and only keep ones that
             # actually have a name (skip empty/broken entries).
             primary_outcome = outcomes_module.get("primaryOutcomes",[])
-            primary_outcome = (primary_outcome[0].get("name") if primary_outcome else "")
+            primary_outcome = (
+                primary_outcome[0].get("name") or ""
+                if primary_outcome
+                else ""
+            )
             # A study can technically list more than one primary outcome,
             # but in practice the first one is the main one.
             # The "if primary_outcomes_list else" guards against an

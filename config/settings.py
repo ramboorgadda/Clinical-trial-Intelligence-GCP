@@ -2,6 +2,7 @@
 # without centralized settings, devs os.getenv() is scatterred across 30 files 
 # for ex, if the env var names changes then it requires manual changing looking into all the dependencies
 # all the envs are defined in one places - settings.py
+from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 # BaseSettings it knows how to read env vars and validate them
 # SettingsConfigDict it knows how to read .env file and validate them
@@ -10,9 +11,10 @@ from pydantic import Field # Field adds metadata to each setting
 
 class Settings(BaseSettings):
     ''' Define all configurations in one place only,they are case insensitive and can be read from .env file or env vars'''
-    model_config = SettingsConfigDict(env_file=".env", 
+    model_config = SettingsConfigDict(env_file=Path(__file__).resolve().parent.parent / ".env", 
                                     env_file_encoding="utf-8", 
                                     case_sensitive=False,
+                                    env_ignore_empty=True,
                                     extra="ignore",) # ignore any extra env vars that are not defined in this class
     
     

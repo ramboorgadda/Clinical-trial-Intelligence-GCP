@@ -56,8 +56,8 @@ from tenacity import( retry,
                     wait_exponential,
                     retry_if_exception_type)
 from config.settings import settings
-from config.logging_config import setup_logger
-logger = setup_logger(__name__)
+from config.logging_config import setup_logging
+logger = setup_logging(__name__)
 
 # Constants
 
@@ -177,13 +177,15 @@ class PubMedClient:
             Empty list if no papers found or request failed.
         """
         try:
-            response = await self._client(f"{BASE_URL}/esearch.fcgi", params={
+            response = await self._client.get(
+                f"{BASE_URL}/esearch.fcgi",
+                params={
                 "db": "pubmed",
                 "term": nct_id,
                 "retmax": max_results,
                 "retmode": "json",
-            }
-                                        )
+                },
+            )
             response.raise_for_status()
             data = response.json()
             id_list = data.get("esearchresult", {}).get("idlist", [])
