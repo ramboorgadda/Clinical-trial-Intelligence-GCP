@@ -154,7 +154,7 @@ async def run_ingestion():
                         (r for r in raw_studies 
                          if r.get("protocolSection",{})
                          .get("identificationModule", {})
-                         .get("nct_id") == study.nct_id),
+                         .get("nctId") == study.nct_id),
                         None
                     )
                     # This line looks scary but it is simply asking:
