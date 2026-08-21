@@ -85,3 +85,96 @@ class TextChunk:
     chunk_index: int
     source:      str
     word_count:  int
+
+class Chunker:
+    """
+    Splits study and paper documents into overlapping text chunks.
+
+    Usage:
+        chunker = Chunker()
+        chunks = chunker.chunk_study(parsed_study)
+        chunks = chunker.chunk_paper(parsed_paper)
+    """
+    # ── CHUNK ONE STUDY ───────────────────────────────────────
+    
+    def chunk_study(self, study: ParsedStudy) -> list[TextChunk]:
+        """
+        Takes one ParsedStudy and produces a list of TextChunks.
+
+        First we BUILD the full text by combining all the study's
+        important fields into one long string, with clear labels
+        so the embedding model knows what each section means.
+
+        Then we SPLIT that long string into overlapping chunks.
+
+        Args:
+            study: A clean ParsedStudy object from document_parser.py
+
+        Returns:
+            A list of TextChunk objects, ready for embedding.
+        """
+        full_text = self._build_study_text(study)
+        chunks = self._split_into_chunks(text = full_text,
+                                        nct_id = study.nct_id,
+                                        source = "study")
+        logger.info(
+            f"Chunked Study |"
+            f" NCT_ID={study.nct_id} |"
+            f" Chunks_Produced={len(chunks)}")
+        
+        return chunks
+    def chunk_paper(self,paper: ParsedPaper) -> list[TextChunk]:
+        """
+        Takes one ParsedPaper and produces a list of TextChunks.
+
+        Same two-step process as chunk_study:
+        1. Build the full text from all the paper's fields.
+        2. Split into overlapping chunks.
+
+        Args:
+            paper: A clean ParsedPaper object from document_parser.py
+
+        Returns:
+            A list of TextChunk objects, ready for embedding.
+        """
+        full_text = self._build_paper_text(paper)
+        chunks = self._split_into_chunks(text = full_text,
+                                        nct_id = paper.nct_id,
+                                        source = "paper")
+        logger.info(
+            f"Chunked Paper |"
+            f" NCT_ID={paper.nct_id} |"
+            f" Chunks_Produced={len(chunks)}")
+        
+        return chunks
+    # ── CHUNK MANY STUDIES AT ONCE ────────────────────────────
+    def chunk_studies(self, studies: list[ParsedStudy]) -> list[TextChunk]:
+        """
+        Takes a list of ParsedStudy objects and produces a list of TextChunks.
+
+        Args:
+            studies: A list of clean ParsedStudy objects from document_parser.py
+
+        Returns:
+            A list of TextChunk objects, ready for embedding.
+        """
+        all_chunks = []
+        for study in studies:
+            all_chunks.extend(self.chunk_study(study))
+        return all_chunks
+
+    # ── CHUNK MANY PAPERS AT ONCE ────────────────────────────
+    def chunk_papers(self, papers: list[ParsedPaper]) -> list[TextChunk]:
+        """
+        Takes a list of ParsedPaper objects and produces a list of TextChunks.
+
+        Args:
+            papers: A list of clean ParsedPaper objects from document_parser.py
+
+        Returns:
+            A list of TextChunk objects, ready for embedding.
+        """
+        all_chunks = []
+        for paper in papers:
+            all_chunks.extend(self.chunk_paper(paper))
+        return all_chunks
