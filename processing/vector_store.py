@@ -194,3 +194,214 @@ class VectorStore:
         if self.pool:
             await self.pool.close()
             logger.info("Connection pool closed successfully")
+# ── SAVE EMBEDDED CHUNKS TO CLOUD SQL ─────────────────────
+    async def save_embedded_chunk(self,
+                                chunks: list[EmbeddedChunk]) -> int:
+        """
+        Saves a list of EmbeddedChunks into the chunks table.
+
+        Uses INSERT ... ON CONFLICT DO NOTHING so it is safe
+        to run multiple times — duplicate chunks are silently
+        skipped instead of causing an error.
+
+        Args:
+            chunks: List of EmbeddedChunk objects to save.
+
+        Returns:
+            Number of chunks successfully saved.
+        """
+        if not chunks:
+            logger.warning("save_embedded_chunks called with empty list")
+            return 0
+        saved_count = 0
+        async with self._pool.acquire() as conn:
+            # acquire() checks out one connection from the pool.
+            # When this block exits, the connection is returned
+            # to the pool automatically — not closed, just returned.
+            # This is efficient — the next save call reuses it.
+            for chunk in chunks:
+                try:
+                    await conn.execute(
+                        """INSERT INTO chunks (nct_id, chunk_text, embedding, chunk_index, source) VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING""",
+                        # $1, $2, $3, $4, $5 are parameter placeholders.
+                        # asyncpg fills them in from the arguments below.
+                        # This is called a parameterised query —
+                        # it prevents SQL injection attacks because
+                        # the values are never inserted directly into
+                        # the SQL string, they are passed separately.
+                        #
+                        # ON CONFLICT DO NOTHING means:
+                        # if a chunk with this chunk_id already exists,
+                        # skip it silently instead of raising an error.
+                        # This makes the entire processing step idempotent
+                        # — safe to run again without duplicating data.
+                        chunk.nct_id, 
+                        chunk.text, 
+                        chunk.embedding, 
+                        chunk.chunk_index, 
+                        chunk.source
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to save chunk | "
+                        f"chunk_id={chunk.chunk_id} | "
+                        f"error={e}"
+                    )
+                # Here you would execute the SQL insert for each chunk.
+                # Example (pseudo-code):
+                # await conn.execute(
+                #     "INSERT INTO chunks (text, metadata, embedding) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
+                #     chunk.text, chunk.metadata, chunk.embedding
+                # )
+                saved_count += 1
+        logger.info(
+            f"Chunks saved | "
+            f"saved={saved_count} | "
+            f"total_input={len(chunks)} | "
+            f"skipped={len(chunks) - saved_count}"
+        )
+        return saved_count
+    async def save_Study(self, 
+                        study_data: dict[str,Any]) -> None:
+        """
+        Saves one study record into the studies table.
+
+        Uses INSERT ... ON CONFLICT (nct_id) DO UPDATE so that
+        if a study already exists, its fields get refreshed
+        with the latest data instead of being skipped.
+
+        Args:
+            study_data: Dictionary of study fields to save.
+        """
+        
+        async with self._pool.acquire() as conn:
+            await conn.execute(
+                """INSERT INTO studies
+                    (nct_id, title, sponsor, phase, status,
+                    conditions, interventions, primary_outcome,
+                    secondary_outcomes, start_date, completion_date,
+                    results_posted, enrollment, gcs_path)
+                    VALUES
+                    ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                    ON CONFLICT (nct_id) DO UPDATE SET
+                    title = EXCLUDED.title,
+                    sponsor = EXCLUDED.sponsor,
+                    phase = EXCLUDED.phase,
+                    status = EXCLUDED.status,
+                    conditions = EXCLUDED.conditions,
+                    interventions = EXCLUDED.interventions,
+                    primary_outcome = EXCLUDED.primary_outcome,
+                    secondary_outcomes = EXCLUDED.secondary_outcomes,
+                    start_date = EXCLUDED.start_date,
+                    completion_date = EXCLUDED.completion_date,
+                    results_posted = EXCLUDED.results_posted,
+                    enrollment = EXCLUDED.enrollment,
+                    gcs_path = EXCLUDED.gcs_path
+                """,
+                study_data.get("nct_id"),
+                study_data.get("title"),
+                study_data.get("sponsor"),
+                study_data.get("phase"),
+                study_data.get("status"),
+                study_data.get("conditions"),
+                study_data.get("interventions"),
+                study_data.get("primary_outcome"),
+                study_data.get("secondary_outcomes"),
+                study_data.get("start_date"),
+                study_data.get("completion_date"),
+                study_data.get("results_posted"),
+                study_data.get("enrollment"),
+                study_data.get("gcs_path")
+            )
+# ── SEMANTIC SEARCH — THE CORE INTELLIGENCE OPERATION ─────
+    async def search(self,
+                    query_embeddings: list[float],
+                    top_k: int = TOP_K_DEFAULT,
+                    source_filter: str | None = None,
+                    nct_id_filter: str | None = None) -> list[dict[str, Any]]:
+        """
+        Finds the most semantically similar chunks to a query embedding.
+
+        Uses pgvector's cosine distance operator (<=>)  to compare
+        the query embedding against every stored chunk embedding
+        and returns the TOP_K closest ones.
+
+        This is the method every agent calls when it needs context.
+        It is the bridge between a natural language question and
+        the relevant chunks stored in Cloud SQL.
+
+        Args:
+            query_embedding:  The search query as 1536 numbers.
+            top_k:            How many results to return.
+            source_filter:    Optional filter by source type.
+            nct_id_filter:    Optional filter by specific study.
+
+        Returns:
+            List of dictionaries, each containing:
+            - nct_id:      Which study this chunk belongs to
+            - chunk_text:  The actual text content
+            - chunk_index: Position in the original document
+            - source:      "study" or "paper"
+            - distance:    Cosine distance (lower = more similar)
+            - 0.0 = identical meaning
+            - 1.0 = completely different meaning
+            - 2.0 = opposite meaning
+        """
+        conditions = []
+        params: list[Any] = [query_embeddings]
+        param_count = 1
+        # Tracks our parameter numbering ($1, $2, $3...).
+        # We increment this each time we add a filter parameter.
+        if source_filter is not None:
+            conditions.append(f"source = ${param_count}")
+            params.append(source_filter)
+            param_count += 1
+        if nct_id_filter is not None:
+            conditions.append(f"nct_id = ${param_count}")
+            params.append(nct_id_filter)
+            param_count += 1
+        where_clause = ""
+        if conditions:
+            where_clause = "WHERE " + " AND ".join(conditions)
+        param_count += 1
+        params.append(top_k)
+        # top_k is always the last parameter.
+        query = f"""
+            SELECT
+                nct_id,
+                chunk_text,
+                chunk_index,
+                source,
+                embedding <=> $1 AS distance
+            FROM chunks
+            {where_clause}
+            ORDER BY distance ASC
+            LIMIT ${param_count}
+        """
+        # This SQL query is the heart of semantic search.
+        #
+        # embedding <=> $1
+        #   The <=> operator is pgvector's cosine distance.
+        #   It compares each stored embedding against our query embedding.
+        #   Returns a number between 0 and 2.
+        #   0 = identical, 1 = orthogonal (unrelated), 2 = opposite.
+        #
+        # ORDER BY distance ASC
+        #   Sort by distance, smallest first.
+        #   Smallest distance = most similar meaning = most relevant.
+        #
+        # LIMIT $N
+        #   Return only the top N results.
+        #   We do not want all 300 chunks — just the most relevant ones.
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(query, *params)
+        results = [dict(row) for row in rows]
+        logger.info(
+            f"Semantic search complete | "
+            f"results_found={len(results)} | "
+            f"top_k={top_k} | "
+            f"source_filter={source_filter} | "
+            f"nct_id_filter={nct_id_filter}"
+        )
+
+        return results
