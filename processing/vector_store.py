@@ -405,3 +405,28 @@ class VectorStore:
         )
 
         return results
+# Check how many chunks are stored in the database
+    async def count_chunks(self) -> int:
+        """Returns the total number of chunks currently in the database.
+        Used by run_processing.py to report progress after saving.
+
+        Returns:
+            Total count of rows in the chunks table.
+        """
+        async with self._pool.acquire() as conn:
+            results = await conn.fetchval("select count(*) from chunks")
+        logger.info(f"Total chunks in database: {results}")
+        return results
+    # ── CHECK IF A STUDY HAS ALREADY BEEN PROCESSED ───────────
+    async def is_study_exists(self,nct_id: str) -> bool:
+        """Checks if a study with the given NCT ID already exists in the database.
+
+        Args:
+            nct_id: The NCT ID of the study to check.
+
+        Returns:
+            True if the study exists, False otherwise.
+        """
+        async with self._pool.acquire() as conn:
+            count = await conn.fetchval("select count(*) from chunks where nct_id=$1", nct_id)
+        return count > 0
