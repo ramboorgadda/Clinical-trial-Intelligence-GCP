@@ -64,3 +64,50 @@ async def run_processing():
     chunker = Chunker()
     embedder = Embedder()
     vector_store = VectorStore()
+    logger.info("Loading parsed studies from GCS...")
+    nct_ids =await gcs_store.list_processed_studies()
+    logger.info(f"Found {len(nct_ids)} studies in GCS")
+    
+    studies: list[ParsedStudy] = []
+    for nct_id in nct_ids:
+        study = await gcs_store.load_parsed_study(nct_id)
+        if study is not None:
+            studies.append(study)
+        logger.info(f"Loaded {len(studies)} studies successfully")
+    # ── OPEN THE DATABASE CONNECTION ───────────────────────────
+    async with VectorStore() as vector_store:
+        # "async with" opens the connection pool when we enter
+        # and GUARANTEES it closes when we exit — even if an
+        # error occurs halfway through. This is the correct way
+        # to use VectorStore — never open it manually.
+
+        # ── STEP 2: SAVE STUDY METADATA TO CLOUD SQL ──────────
+        # IMPORTANT: We MUST do this BEFORE saving chunks.
+        # The chunks table has a foreign key to the studies table.
+        # If we try to save chunks first, every insert will fail
+        # with ForeignKeyViolationError because the studies do
+        # not exist in the database yet.
+        logger.info("Saving study metadata to Cloud SQL...")
+        for study in studies:
+            success = await vector_store.save_Study(
+                study_data = {
+                    "nct_id": study.nct_id,
+                    "title": study.title,
+                    "description": study.description,
+                    "status": study.status,
+                    "start_date": study.start_date,
+                    "completion_date": study.completion_date,
+                    "phase": study.phase,
+                    "sponsor": study.sponsor,
+                    "conditions": study.conditions,
+                    "interventions": study.interventions,
+                    "locations": study.locations,
+                    "results_posted": study.results_posted,
+                    "enrollment": study.enrollment,
+                    "gcs_path": f"processed/studies/{study.nct_id}.json",
+                }
+            )
+            if success:
+                    studies_saved += 1
+        
+        logger.info(f"Study metadata saved successfully: {studies_saved} studies") 
