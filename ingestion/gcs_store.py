@@ -225,9 +225,11 @@ class GCSStore:
             A list of NCT IDs (strings) for all processed studies.
         """
         prefix = PREFIX_PROCESSED_STUDIES
-        blobs = self._bucket.list_blobs(prefix=prefix)
+        blobs = await asyncio.to_thread(
+            lambda: list(self._bucket.list_blobs(prefix=prefix))
+        )
         nct_ids = []
-        async for blob in blobs:
+        for blob in blobs:
             # Each blob's name looks like "processed/studies/NCT12345678.json"
             # We want to extract just the NCT ID part.
             name = blob.name

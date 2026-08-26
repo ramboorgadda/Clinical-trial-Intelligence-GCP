@@ -191,8 +191,9 @@ class VectorStore:
         Always call this when you are done with the VectorStore.
         Leaving connections open wastes Cloud SQL resources.
         """
-        if self.pool:
-            await self.pool.close()
+        if self._pool:
+            await self._pool.close()
+            self._pool = None
             logger.info("Connection pool closed successfully")
 # ── SAVE EMBEDDED CHUNKS TO CLOUD SQL ─────────────────────
     async def save_embedded_chunk(self,
@@ -236,11 +237,12 @@ class VectorStore:
                         # This makes the entire processing step idempotent
                         # — safe to run again without duplicating data.
                         chunk.nct_id, 
-                        chunk.text, 
+                        chunk.chunk_text,
                         chunk.embedding, 
                         chunk.chunk_index, 
                         chunk.source
                     )
+                    saved_count += 1
                 except Exception as e:
                     logger.error(
                         f"Failed to save chunk | "
@@ -253,7 +255,6 @@ class VectorStore:
                 #     "INSERT INTO chunks (text, metadata, embedding) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
                 #     chunk.text, chunk.metadata, chunk.embedding
                 # )
-                saved_count += 1
         logger.info(
             f"Chunks saved | "
             f"saved={saved_count} | "

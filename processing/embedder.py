@@ -53,8 +53,8 @@ from dataclasses import dataclass
 from openai import AsyncOpenAI
 from processing.chunker import TextChunk
 from config.settings import settings
-from config.logging_config import setup_logger
-logger = setup_logger(__name__)
+from config.logging_config import setup_logging
+logger = setup_logging(__name__)
 
 BATCH_SIZE = 50
 # Number of chunks to send in a single API call to OpenAI.
@@ -106,8 +106,8 @@ class Embedder:
         embedded = await embedder.embed_chunks(list_of_text_chunks)
     """
     def __init__(self):
-        self._client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        self._model = settings.OPENAI_EMBEDDING_MODEL
+        self._client = AsyncOpenAI(api_key=settings.openai_api_key)
+        self._model = settings.openai_embedding_model
         
         logger.info(f"embedder initialized with the model {self._model}")
     async def embed_chunks(self, chunks: list[TextChunk]) -> list[EmbeddedChunk]:
@@ -148,7 +148,7 @@ class Embedder:
                     f"total_input chunks: {len(chunks)} |"
                     f"skipped chunks: {len(chunks) - len(all_embedded_chunks)}")
         return all_embedded_chunks
-    async def _create_batches(self,chunks:list[TextChunk]) -> list[list[TextChunk]]:
+    def _create_batches(self,chunks:list[TextChunk]) -> list[list[TextChunk]]:
         """
         Splits a flat list of chunks into smaller batches.
 

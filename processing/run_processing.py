@@ -44,6 +44,14 @@
 #   2024-03-15 14:32:45 | INFO | Chunks stored     : 312
 ##############################################################################
 import asyncio
+import sys
+from pathlib import Path
+
+if __package__ in (None, ""):
+    # Allow direct execution: python processing/run_processing.py
+    # by adding project root to the import path.
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from ingestion.document_parser import ParsedStudy
 from ingestion.gcs_store import GCSStore
 from processing.chunker import Chunker
@@ -93,7 +101,6 @@ async def run_processing():
                 study_data = {
                     "nct_id": study.nct_id,
                     "title": study.title,
-                    "description": study.description,
                     "status": study.status,
                     "start_date": study.start_date,
                     "completion_date": study.completion_date,
@@ -101,7 +108,8 @@ async def run_processing():
                     "sponsor": study.sponsor,
                     "conditions": study.conditions,
                     "interventions": study.interventions,
-                    "locations": study.locations,
+                    "primary_outcome": study.primary_outcome,
+                    "secondary_outcomes": study.secondary_outcomes,
                     "results_posted": study.results_posted,
                     "enrollment": study.enrollment,
                     "gcs_path": f"processed/studies/{study.nct_id}.json",
@@ -109,5 +117,23 @@ async def run_processing():
             )
             if success:
                     studies_saved += 1
+        if 'studies_saved' not in locals():
+            studies_saved = 0
         
         logger.info(f"Study metadata saved successfully: {studies_saved} studies") 
+        # ── STEP 3: CHUNK ALL STUDIES ──────────────────────────
+        logger.info("Chunking studies...")
+        all_chunks = chunker.chunk_studies(studies)
+        logger.info(f"Total chunks created: {len(all_chunks)}")
+        # ── STEP 4: SAVE CHUNKS TO VECTOR STORE ───────────────
+        logger.info("Embedding chunks via OpenAI...")
+        embedded_chunks = await embedder.embed_chunks(all_chunks)
+        logger.info(f"Total chunks embedded: {len(embedded_chunks)}")
+        chunks_stored = await vector_store.save_embedded_chunk(embedded_chunks)
+        logger.info(f"Total chunks stored: {chunks_stored}")
+
+if __name__ == "__main__":
+    asyncio.run(run_processing())
+    # asyncio.run() starts the async event loop and runs
+    # run_processing() inside it — same pattern as run_ingestion.py.
+    # This is the ignition key for the entire processing pipeline.
