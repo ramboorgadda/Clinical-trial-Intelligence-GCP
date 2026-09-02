@@ -197,9 +197,9 @@ def fetch_papers_for_trial(
                 "papers":  [],
                 "count":   0,
                 "message": f"No published papers found on PubMed that "
-                           f"reference trial {nct_id}. The trial may not "
-                           "have published results in academic journals, "
-                           "or results may only exist as grey literature.",
+                        f"reference trial {nct_id}. The trial may not "
+                        "have published results in academic journals, "
+                        "or results may only exist as grey literature.",
             }, indent=2)
 
         parsed_papers = _parser.parse_papers(raw_papers=raw_papers)
