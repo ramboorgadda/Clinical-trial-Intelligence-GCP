@@ -371,3 +371,263 @@ def get_sponsor_profile(sponsor_name: str) -> str:
     except Exception as e:
         logger.error(f"get_sponsor_profile failed | error={e}")
         return json.dumps({"error": str(e), "found": False})
+##############################################################################
+# TOOL 5: update_sponsor_profile
+##############################################################################
+
+@tool
+def update_sponsor_profile(
+    sponsor_name: str,
+    results_posted: bool = False,
+    had_broken_promises: bool = False,
+    delay_days: int = 0
+) -> str:
+    """
+    Update a sponsor's profile with findings from the current study.
+
+    Call this tool AFTER you have analysed a study and determined:
+    - Whether the sponsor posted results (True/False)
+    - Whether outcome switching was detected (True/False)
+    - How many days late the study was (0 if on time)
+
+    This update accumulates in the sponsor's profile permanently.
+    Future agent sessions will see the updated credibility score.
+
+    Args:
+        sponsor_name:       The exact sponsor name from the study.
+        results_posted:     True if sponsor posted results, False if not.
+        had_broken_promise: True if outcome switching was detected.
+        delay_days:         How many days past completion date. 0 if on time.
+
+    Returns:
+        JSON string confirming the update was applied.
+    """
+    logger.info(
+        f"Tool called: update_sponsor_profile |"
+        f" sponsor={sponsor_name} |"
+        f" results_posted={results_posted} |"
+        f" broken_promises={had_broken_promises} |"
+        f" delay_days={delay_days}"
+    )
+    try:
+        _run_async(_semantic_store.update_sponsor_profile(
+            sponsor=sponsor_name,
+            results_posted=results_posted,
+            had_broken_promises=had_broken_promises,
+            delay_days=delay_days
+        ))
+        return json.dumps({
+            "success": True,
+            "sponsor": sponsor_name,
+            "message": "Sponsor profile updated successfully.",
+            "results_posted": results_posted,
+            "had_broken_promises": had_broken_promises,
+            "delay_days": delay_days,
+        },indent=2)
+    except Exception as e:
+        logger.error(f"update_sponsor_profile failed | error={e}")
+        return json.dumps({"error": str(e), "success": False})
+##############################################################################
+# TOOL 6: get_low_credibility_sponsors
+##############################################################################
+
+@tool
+def get_low_credibility_sponsors(
+    threshold:   float = 0.6,
+    min_studies: int   = 3,) -> str:
+     """
+    Get all sponsors with credibility scores below the threshold.
+
+    Use this tool when looking for patterns across problematic sponsors
+    or when you want to check if the current study's sponsor has a
+    history of compliance issues.
+
+    Args:
+        threshold:   Credibility below this is considered low. Default 0.6.
+        min_studies: Minimum studies to qualify. Avoids judging new sponsors
+                     on too little data. Default 3.
+
+    Returns:
+        JSON string listing all low-credibility sponsors with their profiles.
+        Empty list if all sponsors are above the threshold.
+    """
+     logger.info(
+        f"Tool called: get_low_credibility_sponsors | "
+        f"threshold={threshold} | min_studies={min_studies}"
+    )
+     try:
+        sponsors = _run_async(_semantic_store.get_low_credibility_sponsors(
+             threshold=threshold,
+             min_studies=min_studies
+         ))
+        if not sponsors:
+            return json.dumps({
+                "sponsors": [],
+                "message":  f"No sponsors found below credibility {threshold} "
+                            f"with at least {min_studies} studies.",
+                "count":    0,
+            }, indent=2)
+        return json.dumps({
+             "success": True,
+             "threshold": threshold,
+             "min_studies": min_studies,
+             "sponsors": sponsors
+         }, indent=2)
+     except Exception as e:
+         logger.error(f"get_low_credibility_sponsors failed | error={e}")
+         return json.dumps({"error": str(e), "success": False})
+
+##############################################################################
+# TOOL 7: search_study_chunks_by_nct_id
+##############################################################################
+
+@tool
+def search_study_chunks_by_nct_id(
+    nct_id: str,
+    query: str = "",
+) -> str:
+    """
+    Retrieve all text chunks for one specific study by its NCT ID.
+
+    Use this tool when you already know WHICH study you want to
+    examine in detail and need to read its full content.
+
+    Different from search_studies_by_meaning which searches ACROSS
+    all studies. This tool gets the full content of ONE specific study.
+
+    Args:
+        nct_id: The specific study's NCT ID.
+                Example: "NCT04788680"
+        query:  Optional — if provided, returns only the most relevant
+                chunk for this study. Leave empty to get all chunks.
+
+    Returns:
+        JSON string with all chunks from this study.
+    """
+    logger.info(
+        f"Tool called: search_study_chunks_by_nct_id | "
+        f"nct_id={nct_id}"
+    )
+    
+    try:
+       
+       if query:
+        results = _run_async(
+            _vector_store.search(
+                query_text=query,
+                top_k=5,
+                nct_id_filter=nct_id, 
+                )
+            )
+       else:
+         results = _run_async(
+             _vector_store.get_chunks_for_study(
+                 nct_id=nct_id
+             )
+         )
+       if not results:
+            return json.dumps({
+               "nct_id":  nct_id,
+                "chunks":  [],
+                "message": f"No chunks found for study {nct_id}. "
+                           "The study may not have been processed yet.",
+            }, indent=2)
+            
+       return json.dumps({
+                "success": True,
+                "nct_id": nct_id,
+                "query": query,
+                "chunks": results,
+                "count": len(results),
+        }, indent=2)
+    except Exception as e:
+        logger.error(f"search_study_chunks_by_nct_id failed | error={e}")
+        return json.dumps({"error": str(e), "success": False})
+##############################################################################
+# TOOL 8: search_papers_by_meaning
+##############################################################################
+
+@tool
+def search_papers_by_meaning(
+    query: str,
+    top_k: int = 5,
+) -> str:
+    """
+    Search PubMed research papers using semantic similarity.
+
+    Use this tool when you need to find published research papers
+    related to a specific topic, drug, or safety concern.
+
+    Different from search_studies_by_meaning which searches clinical
+    trial FILINGS. This searches published RESEARCH PAPERS.
+
+    The Side Effect Checker agent uses this most heavily — comparing
+    what official filings say against what papers reported.
+
+    Args:
+        query: What to search for in published papers.
+               Example: "semaglutide cardiovascular side effects"
+               Example: "NCT04788680 safety outcomes"
+        top_k: How many results to return. Default 5.
+
+    Returns:
+        JSON string with matching paper chunks and similarity scores.
+    """
+    
+    logger.info(
+        f"Tool called: search_papers_by_meaning | "
+        f"query={query[:60]} | "
+        f"top_k={top_k}"
+    )
+    try:
+        results = _run_async(
+            _vector_store.search(
+                query_text=query,
+                top_k=top_k,
+                source_filter="paper",
+            )
+        )
+        if not results:
+            return json.dumps({
+                "results": [],
+                "message": "No relevant papers found for this query.",
+                "query":   query,
+            })
+        return json.dumps({
+            "results": results,
+            "count": len(results),
+            "query": query,
+        }, indent=2)
+    except Exception as e:
+        logger.error(f"search_papers_by_meaning failed | error={e}")
+        return json.dumps({"error": str(e), "success": False})
+##############################################################################
+# TOOL REGISTRY
+#
+# A list of all tools defined in this file.
+# We export this list so graph_builder.py can give the right tools
+# to each agent without importing them one by one.
+#
+# Each agent gets a SUBSET of these tools — not all of them.
+# For example:
+#   missing_results_agent → gets search_studies_by_meaning,
+#                           get_sponsor_profile, search_past_episodes,
+#                           save_episode, update_sponsor_profile
+#   side_effect_agent     → gets search_papers_by_meaning,
+#                           search_studies_by_meaning, search_past_episodes,
+#                           save_episode
+#
+# Giving agents only the tools they need keeps their reasoning focused.
+# An agent with 20 tools available gets confused — it does not know
+# which to use. An agent with 5 focused tools reasons more clearly.
+##############################################################################
+ALL_SEARCH_TOOLS = [
+    search_studies_by_meaning,
+    search_past_episodes,
+    save_episode,
+    get_sponsor_profile,
+    update_sponsor_profile,
+    get_low_credibility_sponsors,
+    search_study_chunks_by_nct_id,
+    search_papers_by_meaning,
+]
