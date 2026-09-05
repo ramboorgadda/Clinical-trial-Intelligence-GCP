@@ -140,7 +140,89 @@ class HITLGate:
                 "pending"
             )
         return queue_id
-    async def _get_agent_from_signal(self,signal_id: str) -> str | None:
+    
+    async def process_human_decision(
+        self,
+        queue_id:         str,
+        decision:         str,   # "approve", "reject", "edit"
+        reviewer:         str,
+        rejection_reason: str = "",
+        edit_summary:     str = "",
+    ) -> dict[str, Any]:
+        """
+        Processes a human reviewer's decision on a queued signal.
+
+        approve → signal status becomes "approved"
+        edit    → signal summary updated, status becomes "approved"
+        reject  → signal status becomes "rejected" AND rejection reason
+                is written to procedural memory (the learning loop)
+        """ 
+        await self._ensure_pool()
+        
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT signal_id from hitl_reviews where review_id = $1",
+                queue_id,
+            )
+            if not row:
+                return {"success": False, "error": "Review not found"}
+            signal_id = row["signal_id"]
+            new_status = ("approved" if decision in ["approve", "edit"] else "rejected")
+            
+            # Update the hitl_reviews table with the human decision
+            await conn.execute(
+                """
+                UPDATE signals
+                SET status = $1, reviewed_at = NOW()
+                WHERE signal_id = $2
+                """,
+                new_status,
+                signal_id
+            )
+
+            # Update the signals table based on the decision
+            await conn.execute(
+                    """
+                    UPDATE hitl_reviews
+                    SET decision = $1,reviewer = $2,
+                    rejection_reason = $3,
+                    edit_summary = $4
+                    WHERE review_id = $5
+                    """,
+                    decision,
+                    reviewer,
+                    rejection_reason,
+                    edit_summary,
+                    queue_id
+                )
+            # If edited — update the signal summary with the correction
+            if decision == "edit" and edit_summary:
+                await conn.execute(
+                    "UPDATE signals SET summary = $1 WHERE signal_id = $2",
+                    edit_summary, signal_id,
+                )
+
+        # THE LEARNING LOOP — most important part of HITL
+        # If the human REJECTED the signal, write the reason to
+        # procedural memory so the agent reasons differently next time
+            if decision == "reject" and rejection_reason:
+                agent_row = await self._get_agent_for_signal(signal_id)
+                if agent_row:
+                    await self._procedural_store.update_from_feedback(
+                        agent_name=agent_row,
+                        rejection_reason=rejection_reason
+                    )
+                    logger.info(
+                    f"Procedural memory updated from rejection | "
+                    f"agent={agent_row}"
+                )
+            return {
+            "success":   True,
+            "decision":  decision,
+            "signal_id": signal_id,
+            "queue_id":  queue_id,
+        }
+    async def _get_agent_for_signal(self,signal_id: str) -> str | None:
         """Returns the agent name for a given signal_id."""
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
