@@ -8,7 +8,7 @@ from langgraph.graph import add_messages
 from langchain_core.messages import BaseMessage
 
 
-def merge_lists(a: list,b: list) -> list:
+def _merge_lists(a: list,b: list) -> list:
     """
     Reducer that APPENDS lists instead of replacing them.
     When multiple agents write to the same list field simultaneously,
@@ -37,9 +37,9 @@ class MosaicState(TypedDict):
     # Without Annotated + reducer, LangGraph crashes with:
     # "Can receive only one value per step"
     # _merge_lists tells LangGraph: APPEND results, don't replace.
-    signals: Annotated[list[SignalOutput],merge_lists]
-    agents_activated: Annotated[list[str], merge_lists]
-    error_log:        Annotated[list, merge_lists]
+    signals: Annotated[list[SignalOutput],_merge_lists]
+    agents_activated: Annotated[list[str], _merge_lists]
+    error_log:        Annotated[list, _merge_lists]
     
     # ── SUPERVISOR OUTPUTS ─────────────────────────────────────
     final_brief:  str

@@ -100,7 +100,7 @@ class EpisodicStore:
         self._embedding_model = settings.OPENAI_EMBEDDING_MODEL
     
     async def _ensure_pool(self) -> None:
-         # async def means this is an ASYNCHRONOUS method.
+        # async def means this is an ASYNCHRONOUS method.
         # You must use "await" when calling it:
         #   await self._ensure_pool()
         # Without await, Python would not actually run the method —
