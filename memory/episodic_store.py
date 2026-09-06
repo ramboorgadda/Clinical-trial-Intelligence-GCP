@@ -96,8 +96,8 @@ class EpisodicStore:
     """
     def __init__(self):
         self._pool: asyncpg.Pool | None = None
-        self._openai = AsyncOpenAI(api_key=settings.OPENAI_API_KEY)
-        self._embedding_model = settings.OPENAI_EMBEDDING_MODEL
+        self._openai = AsyncOpenAI(api_key=settings.openai_api_key)
+        self._embedding_model = settings.openai_embedding_model
     
     async def _ensure_pool(self) -> None:
         # async def means this is an ASYNCHRONOUS method.

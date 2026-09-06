@@ -23,16 +23,16 @@ from agents.pattern_finder_agent import pattern_finder_node
 from agents.side_effect_agent import side_effect_node
 from agents.timeline_agent import timeline_node
 
-from tools.clinical_tools import AllClinicalTools
-from tools.pubmed_tools import AllPubmedTools
-from tools.search_tools import AllSearchTools
+from tools.clinical_tools import ALL_CLINICAL_TOOLS
+from tools.pubmed_tools import ALL_PUBMED_TOOLS
+from tools.search_tools import ALL_SEARCH_TOOLS
 
 from config.logging_config import setup_logger
 
 logger = setup_logger(__name__)
 # All tools combined — passed to ToolNode so LangGraph can
 # execute tool calls made by agents automatically.
-ALL_TOOLS = AllClinicalTools + AllPubmedTools + AllSearchTools
+ALL_TOOLS = ALL_CLINICAL_TOOLS + ALL_PUBMED_TOOLS + ALL_SEARCH_TOOLS
 
 
 def build_mosaic_graph():
