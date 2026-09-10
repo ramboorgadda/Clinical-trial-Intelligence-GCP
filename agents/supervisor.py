@@ -132,3 +132,38 @@ async def supervisor_route(state: MosaicState) -> MosaicState:
         # Empty error log at start — agents write errors here
         # if something goes wrong during their run.
     }
+##############################################################################
+# FUNCTION 2: supervisor_compile
+#
+# This is the LAST node before END in the LangGraph graph.
+# It runs AFTER all six specialists have finished.
+# Its job is to read every signal and write the final brief.
+##############################################################################
+async def supervisor_compile(state: MosaicState) -> dict:
+    """
+    Reads all agent signals and compiles the final intelligence brief.
+
+    WHEN THIS RUNS:
+    LangGraph calls this node only after ALL six specialist nodes
+    have completed. This is guaranteed by the graph structure in
+    graph_builder.py — all specialists connect to this node.
+
+    WHAT THIS FUNCTION DOES:
+    1. Collects all signals from state (from all 6 agents)
+    2. Separates high-confidence signals from those needing review
+    3. Uses GPT-4o to write a professional intelligence brief
+    4. Returns the completed state
+
+    WHY USE GPT-4o TO WRITE THE BRIEF?
+    The raw signals are structured data — JSON with fields like
+    summary, confidence, nct_id. They are accurate but not readable.
+    GPT-4o transforms them into a professional narrative brief that
+    a human analyst can read and act on immediately.
+    The signals provide the FACTS. GPT-4o provides the WRITING.
+
+    Args:
+        state: The full MosaicState — now populated with all agent signals.
+
+    Returns:
+        Dict with final_brief, run_complete=True, and summary stats.
+    """
