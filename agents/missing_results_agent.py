@@ -359,7 +359,7 @@ async def _execute_tool(tool_call: dict, available_tools: list) -> str:
 
     Args:
         tool_call:       The tool call from GPT-4o response.
-                         Contains: name (string) and args (dict).
+                        Contains: name (string) and args (dict).
         available_tools: List of tool functions available to this agent.
 
     Returns:
